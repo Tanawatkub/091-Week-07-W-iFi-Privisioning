@@ -1,0 +1,15 @@
+menu "Example Configuration"
+
+    config EXAMPLE_PROV_SHOW_QR
+        bool "Show Provisioning QR Code"
+        default y
+        help
+            Enable this option to print the Provisioning QR code in ASCII format on the serial console.
+
+    config EXAMPLE_RESET_PROVISIONED
+        bool "Force reset provisioned Wi-Fi credentials"
+        default n
+        help
+            Enable this option to force reset/erase provisioned Wi-Fi credentials on every boot.
+
+endmenu

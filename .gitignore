@@ -1,1 +1,39 @@
-**/build/**
+# ==== ESP-IDF Build Output ====
+build/
+sdkconfig.old
+dependencies.lock
+
+# ==== ESP-IDF Managed Components (auto-downloaded) ====
+managed_components/
+components/managed_components/
+
+# ==== Compiled/Object files ====
+*.o
+*.obj
+*.elf
+*.bin
+*.map
+*.hex
+
+# ==== ESP-IDF internal cache/hash files ====
+.component_hash
+CHECKSUMS.json
+compile_commands.json
+
+# ==== VS Code ESP-IDF Extension ====
+.vscode/
+!.vscode/settings.json
+!.vscode/c_cpp_properties.json
+!.vscode/launch.json
+
+# ==== Python venv / cache ====
+.venv/
+__pycache__/
+*.pyc
+
+# ==== OS junk files ====
+.DS_Store
+Thumbs.db
+
+# ==== Log files ====
+*.log
