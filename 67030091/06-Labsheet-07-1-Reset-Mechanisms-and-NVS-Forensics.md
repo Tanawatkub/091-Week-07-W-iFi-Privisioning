@@ -175,15 +175,46 @@ void app_main(void)
 4. การเรียกฟังก์ชัน `wifi_prov_mgr_is_provisioned(&provisioned)`
 5. จุดแยกสายการทำงานเข้าสู่โหมด **Provisioning Mode** หรือ **Station Mode**
 
-```text
-[พื้นที่สำหรับแนบรูปภาพ Flowchart ที่นักศึกษาเขียนขึ้นด้วย Draw.io / Mermaid / วาดมือ]
+
+```mermaid
+flowchart TD
+    Start["⚡ เริ่มต้นทำงาน (app_main)"] --> CheckBtn{"1. ตรวจสอบปุ่ม Factory Reset (GPIO 18)<br/>ถูกกดค้างไว้ 3 วินาทีหรือไม่?"}
+
+    CheckBtn -- "กดค้างครบ 3 วิ (Low/0)" --> HWReset["[Hardware Reset Mode]<br/>สั่ง nvs_flash_erase()<br/>และเข้าสู่ Provisioning"]
+    CheckBtn -- "ไม่ได้กด (High/1)" --> CheckFlag{"2. ตรวจสอบ Build-time Flag<br/>(#ifdef CONFIG_EXAMPLE_RESET_PROVISIONED)"}
+
+    CheckFlag -- "เปิดใช้งาน Flag" --> MenuReset["[Menuconfig Reset]<br/>เรียก network_prov_mgr_reset_wifi_provisioning()"]
+    CheckFlag -- "ปิดใช้งาน Flag" --> CheckNVS{"3. ตรวจสอบค่าใน NVS Flash<br/>network_prov_mgr_is_wifi_provisioned()"}
+
+    CheckNVS -- "false (ว่างเปล่า/เพิ่งถูกลบด้วย CLI)" --> ProvMode["เข้าสู่โหมด Provisioning<br/>(เริ่ม SoftAP + แสดง QR Code)"]
+    CheckNVS -- "true (มีข้อมูลเดิม)" --> StaMode["เข้าสู่โหมด Wi-Fi Station (STA)<br/>(เชื่อมต่อ Wi-Fi ทันที)"]
+
+    HWReset --> ProvMode
+    MenuReset --> ProvMode
 ```
+
 
 ### ภารกิจที่ 2 ผังสถานะการเปลี่ยนจังหวะไฟ LED 1 (Wi-Fi STA Indicator)
 ให้นักศึกษาวาด State Diagram แสดงการเปลี่ยนสถานะของ **LED 1 (GPIO 2)**:
 - เงื่อนไขใดทำให้ LED 1 เข้าสู่สถานะ `LED_STA_MODE_DISCONNECTED` (กระพริบ 200ms Mark / 200ms Space)
 - เงื่อนไขหรือ Event ใดทำให้เปลี่ยนเป็น `LED_STA_MODE_CONNECTED` (Heartbeat 200ms ทุก 1s)
+```mermaid
+stateDiagram-v2
+    [*] --> LED_STA_OFF : เริ่มต้นระบบ (app_main)
 
+    LED_STA_OFF --> LED_STA_DISCONNECTED : WIFI_EVENT_STA_START<br/>(เริ่มต้นเชื่อมต่อ Wi-Fi)
+
+    state LED_STA_DISCONNECTED {
+        description: Alert Mode (ไฟติด 200ms / ดับ 200ms)
+    }
+
+    state LED_STA_CONNECTED {
+        description: Heartbeat Mode (ไฟติด 200ms ทุก 1 วินาที)
+    }
+
+    LED_STA_DISCONNECTED --> LED_STA_CONNECTED : IP_EVENT_STA_GOT_IP<br/>(เชื่อมต่อสำเร็จและได้รับ IP)
+    LED_STA_CONNECTED --> LED_STA_DISCONNECTED : WIFI_EVENT_STA_DISCONNECTED<br/>(สัญญาณหลุด / ถูกตัดการเชื่อมต่อ)
+```
 ---
 
 ## 6. ตารางบันทึกผลการทดลอง (Experiment Results)
