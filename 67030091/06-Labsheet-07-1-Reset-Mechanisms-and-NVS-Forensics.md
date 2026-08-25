@@ -200,16 +200,32 @@ flowchart TD
 - เงื่อนไขหรือ Event ใดทำให้เปลี่ยนเป็น `LED_STA_MODE_CONNECTED` (Heartbeat 200ms ทุก 1s)
 
 ```mermaid
-stateDiagram-v2
-    [*] --> LED_STA_OFF : เริ่มต้นระบบ (app_main)
+flowchart TD
+    Start["⚡ เริ่มต้นทำงาน (app_main)"] --> CreateTask["สร้าง FreeRTOS Task (led_status_task)"]
+    CreateTask --> CheckBtn{"1. ตรวจสอบปุ่ม GPIO 18<br/>ถูกกดค้างไว้ >= 3 วินาทีหรือไม่?"}
 
-    LED_STA_OFF --> LED_STA_DISCONNECTED : WIFI_EVENT_STA_START<br/>(เริ่มต้นเชื่อมต่อ Wi-Fi)
+    CheckBtn -- "กดค้างครบ 3 วิ (Active Low)" --> HWErase["เรียก nvs_flash_erase()<br/>(ล้าง NVS Flash ทางกายภาพ)"] --> InitNVS
+    CheckBtn -- "ไม่ได้กด (High/Pull-up)" --> InitNVS["2. เริ่มต้นระบบ NVS Flash<br/>ret = nvs_flash_init()"]
 
-    state "LED_STA_DISCONNECTED<br/>(Alert Mode: ติด 200ms / ดับ 200ms)" as LED_STA_DISCONNECTED
-    state "LED_STA_CONNECTED<br/>(Heartbeat Mode: ติด 200ms ทุก 1 วินาที)" as LED_STA_CONNECTED
+    InitNVS --> CheckNVSErr{"ret เท่ากับ<br/>ESP_ERR_NVS_NO_FREE_PAGES หรือ<br/>ESP_ERR_NVS_NEW_VERSION_FOUND ?"}
+    
+    CheckNVSErr -- "ใช่ (Flash เต็ม / เวอร์ชั่นใหม่)" --> RecoveryErase["เรียก nvs_flash_erase()<br/>และ nvs_flash_init() ซ้ำ"] --> InitNet
+    CheckNVSErr -- "ไม่ใช่ (ESP_OK)" --> InitNet["3. เริ่มต้น Network Stack<br/>- esp_netif_init()<br/>- esp_event_loop_create_default()<br/>- สร้าง STA & AP Netif / esp_wifi_init()<br/>- ลงทะเบียน Event Handlers"]
 
-    LED_STA_DISCONNECTED --> LED_STA_CONNECTED : IP_EVENT_STA_GOT_IP<br/>(เชื่อมต่อสำเร็จและได้รับ IP)
-    LED_STA_CONNECTED --> LED_STA_DISCONNECTED : WIFI_EVENT_STA_DISCONNECTED<br/>(สัญญาณหลุด / ถูกตัดการเชื่อมต่อ)
+    InitNet --> InitProvMgr["4. เริ่มต้น Provisioning Manager<br/>network_prov_mgr_init(scheme_softap)"]
+
+    InitProvMgr --> CheckMacro{"5. ตรวจสอบเงื่อนไข Macro<br/>#ifdef CONFIG_EXAMPLE_RESET_PROVISIONED"}
+
+    CheckMacro -- "เปิดใช้งาน (y)" --> ResetProv["เรียก network_prov_mgr_reset_wifi_provisioning()"] --> CheckProvState
+    CheckMacro -- "ไม่ได้เปิดใช้งาน (n)" --> CheckProvState["6. ตรวจสอบสถานะการ Provision<br/>network_prov_mgr_is_wifi_provisioned(&provisioned)"]
+
+    CheckProvState --> IsProv{"provisioned == true ?"}
+
+    IsProv -- "false (ยังไม่เคยตั้งค่า / โดนสั่งลบค่า)" --> ProvMode["<b>Provisioning Mode</b><br/>- สร้างชื่อ SoftAP จาก MAC Address<br/>- เรียก network_prov_mgr_start_provisioning()<br/>- พิมพ์ QR Code บน Terminal / รอรับ Config"]
+    IsProv -- "true (มีข้อมูล Wi-Fi บันทึกอยู่)" --> StaMode["<b>Wi-Fi Station Mode</b><br/>- เรียก network_prov_mgr_deinit()<br/>- ตั้งค่า esp_wifi_set_mode(WIFI_MODE_STA)<br/>- เรียก esp_wifi_start() เพื่อเชื่อมต่อ AP"]
+
+    ProvMode --> MainLoop["เข้าสู่ Infinite Loop<br/>vTaskDelay(1000)"]
+    StaMode --> MainLoop
 ```
 
 ---
