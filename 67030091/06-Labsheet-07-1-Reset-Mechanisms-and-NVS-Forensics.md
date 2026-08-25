@@ -198,23 +198,20 @@ flowchart TD
 ให้นักศึกษาวาด State Diagram แสดงการเปลี่ยนสถานะของ **LED 1 (GPIO 2)**:
 - เงื่อนไขใดทำให้ LED 1 เข้าสู่สถานะ `LED_STA_MODE_DISCONNECTED` (กระพริบ 200ms Mark / 200ms Space)
 - เงื่อนไขหรือ Event ใดทำให้เปลี่ยนเป็น `LED_STA_MODE_CONNECTED` (Heartbeat 200ms ทุก 1s)
+
 ```mermaid
 stateDiagram-v2
     [*] --> LED_STA_OFF : เริ่มต้นระบบ (app_main)
 
     LED_STA_OFF --> LED_STA_DISCONNECTED : WIFI_EVENT_STA_START<br/>(เริ่มต้นเชื่อมต่อ Wi-Fi)
 
-    state LED_STA_DISCONNECTED {
-        description: Alert Mode (ไฟติด 200ms / ดับ 200ms)
-    }
-
-    state LED_STA_CONNECTED {
-        description: Heartbeat Mode (ไฟติด 200ms ทุก 1 วินาที)
-    }
+    state "LED_STA_DISCONNECTED<br/>(Alert Mode: ติด 200ms / ดับ 200ms)" as LED_STA_DISCONNECTED
+    state "LED_STA_CONNECTED<br/>(Heartbeat Mode: ติด 200ms ทุก 1 วินาที)" as LED_STA_CONNECTED
 
     LED_STA_DISCONNECTED --> LED_STA_CONNECTED : IP_EVENT_STA_GOT_IP<br/>(เชื่อมต่อสำเร็จและได้รับ IP)
     LED_STA_CONNECTED --> LED_STA_DISCONNECTED : WIFI_EVENT_STA_DISCONNECTED<br/>(สัญญาณหลุด / ถูกตัดการเชื่อมต่อ)
 ```
+
 ---
 
 ## 6. ตารางบันทึกผลการทดลอง (Experiment Results)
