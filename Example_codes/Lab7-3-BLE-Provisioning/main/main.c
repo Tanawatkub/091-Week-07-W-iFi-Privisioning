@@ -7,8 +7,8 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
-#include "wifi_provisioning/manager.h"
-#include "wifi_provisioning/scheme_ble.h"
+#include "network_provisioning/manager.h"
+#include "network_provisioning/scheme_ble.h"
 
 static const char *TAG = "LAB7_3_BLE";
 
@@ -18,13 +18,13 @@ static const char *TAG = "LAB7_3_BLE";
 
 static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-    if (event_base == WIFI_PROV_EVENT) {
+    if (event_base == NETWORK_PROV_EVENT) {
         switch (event_id) {
-            case WIFI_PROV_START:
+            case NETWORK_PROV_START:
                 ESP_LOGI(TAG, "[PROV EVENT]: BLE Provisioning Started (Advertising)!");
                 gpio_set_level(LED_PIN_BLE_PROV, 1);
                 break;
-            case WIFI_PROV_CRED_RECV: {
+            case NETWORK_PROV_WIFI_CRED_RECV: {
                 wifi_sta_config_t *sta_cfg = (wifi_sta_config_t *)event_data;
                 ESP_LOGI(TAG, "=================================================");
                 ESP_LOGI(TAG, "[BLE CREDENTIALS RECEIVED]:");
@@ -33,13 +33,21 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
                 ESP_LOGI(TAG, "=================================================");
                 break;
             }
-            case WIFI_PROV_CRED_SUCCESS:
+            case NETWORK_PROV_WIFI_CRED_FAIL: {
+                network_prov_wifi_sta_fail_reason_t *reason =
+                    (network_prov_wifi_sta_fail_reason_t *)event_data;
+                ESP_LOGE(TAG, "[FAIL]: Provisioning failed! Reason: %s",
+                         (*reason == NETWORK_PROV_WIFI_STA_AUTH_ERROR) ?
+                         "Wi-Fi station authentication failed" : "Wi-Fi AP not found");
+                break;
+            }
+            case NETWORK_PROV_WIFI_CRED_SUCCESS:
                 ESP_LOGI(TAG, "[SUCCESS]: BLE Provisioning Successful!");
                 gpio_set_level(LED_PIN_BLE_PROV, 0); // ปิด LED BLE
                 break;
-            case WIFI_PROV_END:
+            case NETWORK_PROV_END:
                 ESP_LOGI(TAG, "[PROV EVENT]: De-initializing BLE & Releasing BT Memory...");
-                wifi_prov_mgr_deinit();
+                network_prov_mgr_deinit();
                 break;
             default:
                 break;
@@ -74,7 +82,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_TRANSPORT_BLE_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
@@ -84,14 +92,14 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
     // กำหนดค่า Provisioning Manager เป็น BLE Scheme + คืน RAM BT เมื่อเสร็จ
-    wifi_prov_mgr_config_t config = {
-        .scheme = wifi_prov_scheme_ble,
-        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
+    network_prov_mgr_config_t config = {
+        .scheme = network_prov_scheme_ble,
+        .scheme_event_handler = NETWORK_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
     };
-    ESP_ERROR_CHECK(wifi_prov_mgr_init(config));
+    ESP_ERROR_CHECK(network_prov_mgr_init(config));
 
     bool provisioned = false;
-    ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
+    ESP_ERROR_CHECK(network_prov_mgr_is_wifi_provisioned(&provisioned));
 
     if (!provisioned) {
         uint8_t mac[6];
@@ -104,25 +112,25 @@ void app_main(void)
             0xb4, 0xdf, 0x5a, 0x1c, 0x3f, 0x6b, 0xf4, 0xbf,
             0xea, 0x4a, 0x82, 0x03, 0x04, 0x90, 0x1a, 0x02,
         };
-        wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
+        network_prov_scheme_ble_set_service_uuid(custom_service_uuid);
 
         ESP_LOGI(TAG, "Starting BLE Provisioning (Name: %s, PoP: %s)", service_name, PROV_POP_KEY);
 
-        wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
-        const char *pop = PROV_POP_KEY;
+        network_prov_security_t security = NETWORK_PROV_SECURITY_1;
+        network_prov_security1_params_t *sec_params = PROV_POP_KEY;
 
-        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, (const void *)pop, service_name, NULL));
+        ESP_ERROR_CHECK(network_prov_mgr_start_provisioning(security, (const void *)sec_params, service_name, NULL));
 
         ESP_LOGI(TAG, "--------------------------------------------------");
         ESP_LOGI(TAG, "[QR CODE URL]: Click or copy the URL below:");
         ESP_LOGI(TAG, "https://espressif.github.io/esp-jumpstart/qrcode.html?data=%%7B%%22ver%%22%%3A%%22v1%%22%%2C%%22name%%22%%3A%%22%s%%22%%2C%%22pop%%22%%3A%%22%s%%22%%2C%%22transport%%22%%3A%%22ble%%22%%7D",
-                 service_name, pop);
+                 service_name, PROV_POP_KEY);
         ESP_LOGI(TAG, "Payload JSON: {\"ver\":\"v1\",\"name\":\"%s\",\"pop\":\"%s\",\"transport\":\"ble\"}",
-                 service_name, pop);
+                 service_name, PROV_POP_KEY);
         ESP_LOGI(TAG, "--------------------------------------------------");
     } else {
         ESP_LOGI(TAG, "Already provisioned! Starting Wi-Fi Station");
-        wifi_prov_mgr_deinit();
+        network_prov_mgr_deinit();
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
     }
