@@ -97,7 +97,23 @@ I (19850) app: Connected with IP Address: 192.168.1.150
 ```
 
 ---
-
+## ขั้นตอนที่ 4: Log การทำงานจริงที่บันทึกได้จาก Serial Monitor
+```text
+I (656) LAB7_2_SOFTAP: Starting SoftAP Provisioning (SSID: PROV_0F61E4, PoP: abcd1234)
+I (766) wifi:mode : sta (14:33:5c:0f:61:e4) + softAP (14:33:5c:0f:61:e5)
+I (796) network_prov_mgr: Provisioning started with service name : PROV_0F61E4
+I (806) LAB7_2_SOFTAP: [PROV EVENT]: SoftAP Provisioning Started!
+I (11696) LAB7_2_SOFTAP: [SOFTAP]: Mobile Phone connected to ESP32 SoftAP!
+I (76676) LAB7_2_SOFTAP: [CREDENTIALS RECEIVED]:
+	SSID     : KMITL-WIFI
+	Password : 
+I (80556) wifi:connected with KMITL-WIFI, aid = 3, channel 1, BW20, bssid = 78:17:be:c0:7d:a1
+I (83826) LAB7_2_SOFTAP: [ONLINE]: Got IP: 10.15.4.86
+I (83836) network_prov_mgr: STA Got IP
+I (83836) LAB7_2_SOFTAP: [SUCCESS]: Provisioning Completed Successfully!
+I (87906) network_prov_mgr: Provisioning stopped
+I (87916) LAB7_2_SOFTAP: [PROV EVENT]: De-initializing Provisioning Manager
+```
 ---
 
 ## 5. กิจกรรมถอดรหัสซอร์สโค้ดและเขียนผังงาน (Code Deconstruction & Sequence Flow Assignment)
@@ -120,27 +136,63 @@ I (19850) app: Connected with IP Address: 192.168.1.150
   - `IP_EVENT_STA_GOT_IP`
 - สถานะจังหวะการกระพริบของ **LED 3 (GPIO 5)** และ **LED 1 (GPIO 2)** ในแต่ละช่วง
 
-```text
-[พื้นที่สำหรับแนบรูปภาพ Sequence Diagram ที่นักศึกษาเขียนขึ้นด้วย Draw.io / Mermaid / วาดมือ]
-```
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as 📱 Smartphone App (ESP SoftAP Prov)
+    participant ESP as ⚡ ESP32 SoftAP Webserver (Protocomm Layer)
+    participant Router as 📡 Wi-Fi Router (AP ปลายทาง)
+
+    Note over ESP: NETWORK_PROV_START ถูก Trigger<br/>LED 3 (GPIO 5): ติดค้าง (แสดงสถานะรอ Provisioning)
+    App->>ESP: เชื่อมต่อ Wi-Fi SSID: PROV_0F61E4
+    Note over ESP: WIFI_EVENT_AP_STACONNECTED ถูก Trigger<br/>Log: "Mobile Phone connected to ESP32 SoftAP!"
+
+    App->>ESP: HTTP POST /prov-session (X25519 Key Exchange + PoP: abcd1234)
+    Note over ESP: security1: คำนวณ Shared Secret + Session Key<br/>(สร้าง Secure Session สำเร็จ)
+    ESP-->>App: HTTP 200 OK (Secured Session Established)
+
+    App->>ESP: HTTP POST /prov-scan (สั่งสแกน Wi-Fi รอบตัว)
+    ESP-->>App: รายชื่อ Wi-Fi SSIDs ที่สแกนพบ + ค่า RSSI
+
+    App->>ESP: HTTP POST /prov-config (SSID: KMITL-WIFI, Password: ว่าง)
+    Note over ESP: NETWORK_PROV_WIFI_CRED_RECV ถูก Trigger<br/>Log: "[CREDENTIALS RECEIVED]: SSID: KMITL-WIFI"
+    ESP-->>App: HTTP 200 OK (รับ Credentials แล้ว)
+
+    ESP->>Router: พยายามเชื่อมต่อ Wi-Fi ด้วย Credentials ที่ได้รับ
+    Router-->>ESP: Authentication + Association สำเร็จ
+
+    Note over ESP: IP_EVENT_STA_GOT_IP ถูก Trigger<br/>Log: "[ONLINE]: Got IP: 10.15.4.86"<br/>LED 1 (GPIO 2): ติดสว่าง (แสดงสถานะเชื่อมต่อ Wi-Fi สำเร็จ)
+
+    Note over ESP: NETWORK_PROV_WIFI_CRED_SUCCESS ถูก Trigger<br/>Log: "[SUCCESS]: Provisioning Completed Successfully!"<br/>LED 3 (GPIO 5): ดับ (ออกจากสถานะ Provisioning)
+
+    ESP-->>App: HTTP 200 OK (Provisioning Successful)
+    Note over ESP: NETWORK_PROV_END ถูก Trigger<br/>ปิด SoftAP + Deinit Provisioning Manager<br/>เข้าสู่โหมด Station ต่อเนื่อง
+```
 ---
 
 ## 6. ตารางบันทึกผลการทดลอง (Experiment Results)
 
 | รายการตรวจสอบ | ค่าที่บันทึกได้จากการทดลอง |
 | :--- | :--- |
-| **1. ชื่อ SoftAP SSID ของ ESP32** | `PROV_`.............................. |
-| **2. รหัส PoP (Proof of Possession)** | ..................................................... |
-| **3. ข้อความใน QR Code Payload (JSON)** | ..................................................... |
-| **4. พฤติกรรมไฟ LED 3 (GPIO 5) ช่วงรอ vs ช่วงส่งข้อมูล** | ช่วงรอ: .......................................<br/>ช่วงส่ง: ....................................... |
-| **5. IP Address ที่ ESP32 ได้รับจาก Router** | ..................................................... |
-| **6. เวลาที่ใช้ตั้งแต่เริ่มจนจบกระบวนการ (วินาที)** | ..................................................... |
+| **1. ชื่อ SoftAP SSID ของ ESP32** | `PROV_0F61E4` |
+| **2. รหัส PoP (Proof of Possession)** | `abcd1234` |
+| **3. ข้อความใน QR Code Payload (JSON)** | `{"ver":"v1","name":"PROV_0F61E4","pop":"abcd1234","transport":"softap"}` |
+| **4. พฤติกรรมไฟ LED 3 (GPIO 5) ช่วงรอ vs ช่วงส่งข้อมูล** | ช่วงรอ: ติดค้าง (สว่างต่อเนื่อง) ตั้งแต่ Event `NETWORK_PROV_START`<br/>ช่วงส่ง: ยังคงติดค้างเหมือนเดิม (โค้ดไม่มี logic แยกกระพริบระหว่างช่วงส่งข้อมูล) จนกว่าจะถึง Event `NETWORK_PROV_WIFI_CRED_SUCCESS` จึงดับ |
+| **5. IP Address ที่ ESP32 ได้รับจาก Router** | `10.15.4.86` |
+| **6. เวลาที่ใช้ตั้งแต่เริ่มจนจบกระบวนการ (วินาที)** | ประมาณ 83 วินาที (จาก t=0.656s เริ่ม SoftAP ถึง t=83.836s Provisioning สำเร็จ) |
 
 ---
 
 ## 7. คำถามท้ายการทดลอง (Post-Lab Questions)
 1. ในโหมด SoftAP Scheme สมาร์ตโฟนส่งข้อมูลหา ESP32 ผ่านโปรโตคอลและ IP Address ใด?
+
+- ส่งผ่าน HTTP ไปที่ IP `192.168.4.1` ซึ่งเป็น IP default ของ ESP32 ตอนเปิด SoftAP
+
 2. หากผู้ใช้ป้อนรหัสผ่าน Wi-Fi ผิดในแอปมือถือ จะเกิด Event ใดขึ้นบน ESP32 (`WIFI_PROV_CRED_FAIL` หรือไม่) และ ESP32 มีพฤติกรรมอย่างไร?
+
+- เกิด Event `NETWORK_PROV_WIFI_CRED_FAIL` (ชื่อใหม่ของ `WIFI_PROV_CRED_FAIL`) ESP32 จะไม่ปิด SoftAP แต่ยังรอรับรหัสผ่านใหม่จากมือถือต่อไปโดยไม่ต้องรีสตาร์ทบอร์ด
+
 3. ทำไมผู้ผลิต IoT ส่วนใหญ่จึงมองว่ากระบวนการเชื่อมต่อแบบ SoftAP มีขั้นตอนที่ยุ่งยากสำหรับผู้ใช้ทั่วไปเมื่อเทียบกับ BLE?
 
+- เพราะ SoftAP ต้องให้ผู้ใช้ออกจากแอปไปสลับ Wi-Fi เองก่อน ทำให้มือถือหลุดเน็ตชั่วคราวและสับสน ส่วน BLE เชื่อมต่อได้จากในแอปเลยโดยเน็ตไม่หลุด ใช้งานลื่นกว่ามาก
