@@ -109,6 +109,9 @@ wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
      ```text
      E (15600) app: Received incorrect username and/or PoP for establishing secure session!
      ```
+
+![alt text](image.png)
+
 4. **การทดสอบที่ 2 (ป้อน PoP ถูกต้อง):**
    - สั่งรีเซ็ตบอร์ดใหม่ และเปิดแอปป้อน PoP เป็น `abcd1234` (ตรงกับค่าในโค้ด)
    - สังเกต Log:
@@ -142,6 +145,27 @@ wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
    - หาก PoP ไม่ตรง $\rightarrow$ Trigger Event `PROTOCOMM_SECURITY_SESSION_CREDENTIALS_MISMATCH` และปฏิเสธการเชื่อมต่อ
    - หาก PoP ถูกต้อง $\rightarrow$ Trigger Event `PROTOCOMM_SECURITY_SESSION_SETUP_OK` และสร้าง AES Session Key สำเร็จ
 
+
+```mermaid
+flowchart TD
+    A([เริ่มต้น]) --> B["กำหนดค่า Session Parameters<br/>ด้วย PoP = 'abcd1234'"]
+    B --> C["ESP32 เริ่ม Provisioning Service<br/>wifi_prov_mgr_start_provisioning()"]
+    C --> D["รอรับ Public Key + Verification Hash<br/>จาก Mobile App (Client)"]
+    D --> E{"ตรวจสอบ PoP<br/>ที่ Client ส่งมา<br/>ตรงกับค่าที่ตั้งไว้หรือไม่?"}
+
+    E -- "ไม่ตรง (Mismatch)" --> F["Trigger Event:<br/>PROTOCOMM_SECURITY_SESSION_<br/>CREDENTIALS_MISMATCH"]
+    F --> G["Log Error:<br/>'Received incorrect username<br/>and/or PoP...'"]
+    G --> H["ปฏิเสธการเชื่อมต่อ<br/>(Session Rejected)"]
+    H --> I([จบการทำงาน / รอ Client ส่งใหม่])
+
+    E -- "ตรงกัน (Match)" --> J["สร้าง Shared Secret<br/>ด้วย Key Exchange Algorithm (SRP6a/X25519)"]
+    J --> K["สร้าง AES Session Key สำเร็จ"]
+    K --> L["Trigger Event:<br/>PROTOCOMM_SECURITY_SESSION_SETUP_OK"]
+    L --> M["Log:<br/>'Secured session established!'"]
+    M --> N([เข้าสู่โหมดสื่อสารแบบเข้ารหัส<br/>Provisioning ต่อไป])
+```
+
+
 ### ภารกิจที่ 2: ผังการรับส่งข้อมูลผ่าน Custom Endpoint (Custom Data Handler Flow)
 ให้นักศึกษาวาด Sequence / Data Flow ของฟังก์ชัน `custom_prov_data_handler()`:
 1. ข้อมูล `inbuf` ถูกส่งเข้ามาจากสมาร์ตโฟนผ่าน Protocomm
@@ -149,9 +173,36 @@ wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
 3. การจัดสรรหน่วยความจำแบบไดนามิกด้วย `strdup()` ให้กับ `*outbuf`
 4. ทำไมตัวแปร `*outbuf` จึงต้องจัดสรรใน Heap Memory (ทำไมจึงใช้ตัวแปร Local Static Array ธรรมดาไม่ได้)?
 
-```text
-[พื้นที่สำหรับแนบรูปภาพ Diagram ที่นักศึกษาเขียนขึ้นด้วย Draw.io / Mermaid / วาดมือ]
+```mermaid
+flowchart TD
+    A([เริ่มต้น]) --> B["Mobile App ส่งข้อมูล<br/>ผ่าน Endpoint 'custom-data'<br/>เช่น 'STUDENT_ID:65010099'"]
+    B --> C["Protocomm Layer ถอดรหัสข้อมูล<br/>(Decrypt ด้วย Session Key)"]
+    C --> D["เรียกฟังก์ชัน Callback<br/>custom_prov_data_handler()<br/>พร้อมส่ง inbuf, inlen เข้ามา"]
+    D --> E{"inbuf != NULL ?"}
+
+    E -- "No" --> F["ข้ามการพิมพ์ Log"]
+    E -- "Yes" --> G["ESP_LOGI(TAG,<br/>'Received custom data: %.*s',<br/>inlen, inbuf)"]
+
+    F --> H["จัดเตรียมข้อความตอบกลับ<br/>char response[] = 'ACK_FROM_ESP32'"]
+    G --> H
+    H --> I["จัดสรรหน่วยความจำแบบ Dynamic<br/>ด้วย strdup(response)<br/>เก็บผลลัพธ์ใน *outbuf"]
+    I --> J{"*outbuf == NULL ?<br/>(จัดสรรหน่วยความจำล้มเหลว)"}
+
+    J -- "Yes" --> K["ESP_LOGE(TAG,<br/>'System out of memory')"]
+    K --> L["return ESP_ERR_NO_MEM"]
+    L --> M([จบฟังก์ชัน: แจ้ง Error กลับ])
+
+    J -- "No" --> N["กำหนด *outlen =<br/>strlen(response) + 1"]
+    N --> O["return ESP_OK"]
+    O --> P["Protocomm Layer เข้ารหัส outbuf<br/>ด้วย Session Key แล้วส่งกลับ<br/>ไปยัง Mobile App"]
+    P --> Q["Protocomm Layer<br/>เรียก free(*outbuf)<br/>คืนหน่วยความจำอัตโนมัติ"]
+    Q --> R([จบการทำงาน])
 ```
+**คำตอบ: ทำไมต้องใช้ Heap Memory (`strdup()`) แทน Local Static Array?**
+
+เพราะตัวแปร local ธรรมดาที่ประกาศในฟังก์ชัน (เช่น `char response[]` แบบ non-static) จะถูกสร้างบน **Stack** และมีอายุการใช้งาน (scope) อยู่แค่ภายในฟังก์ชันนั้นเท่านั้น เมื่อฟังก์ชัน `custom_prov_data_handler()` `return` กลับไป หน่วยความจำส่วนนี้จะถูกเคลียร์/นำไปใช้ซ้ำทันที แต่ Protocomm Layer จะนำ `*outbuf` ไปใช้งานต่อ (เข้ารหัสและส่งออกทาง BLE/HTTP) **หลังจาก** ฟังก์ชันนี้ return ไปแล้ว หากใช้ตัวแปรบน Stack ข้อมูลที่ชี้ไปอาจถูกเขียนทับ (garbage/undefined behavior) ก่อนที่จะถูกส่งออกจริง
+
+การใช้ `strdup()` จะคัดลอกข้อความไปไว้ใน **Heap** ซึ่งมีอายุการใช้งานคงอยู่จนกว่าจะถูก `free()` อย่างชัดเจน ทำให้ข้อมูลยังคงถูกต้องแม้ฟังก์ชันจะจบการทำงานไปแล้ว และ Protocomm Layer จะเป็นผู้รับผิดชอบเรียก `free()` คืนหน่วยความจำเองในภายหลัง
 
 ---
 
@@ -159,15 +210,32 @@ wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
 
 | สถานการณ์ทดสอบ | ค่า PoP ที่ป้อน | ผลลัพธ์บนแอปมือถือ | ข้อความ Log ใน Serial Monitor |
 | :--- | :--- | :--- | :--- |
-| **1. ป้อน PoP ผิดพลาด** | `wrong1234` | | |
-| **2. ป้อน PoP ถูกต้อง** | `abcd1234` | | |
-| **3. ส่ง Custom Data** | `TEST_DATA_999` | | |
+| **1. ป้อน PoP ผิดพลาด** | `wrong1234` | แอปแจ้ง Error ไม่สามารถเชื่อมต่อได้ / Handshake ล้มเหลว (Session Failed) | `E (15600) app: Received incorrect username and/or PoP for establishing secure session!` |
+| **2. ป้อน PoP ถูกต้อง** | `abcd1234` | แอปแสดงสถานะเชื่อมต่อสำเร็จ สามารถดำเนินขั้นตอน Provisioning ต่อได้ (เลือก Wi-Fi, ใส่รหัสผ่าน ฯลฯ) | `I (18200) app: Secured session established!` |
+| **3. ส่ง Custom Data** | `TEST_DATA_999` | แอปได้รับข้อความตอบกลับจาก ESP32 (เช่น `ACK_FROM_ESP32` หรือ `SUCCESS`) แสดงว่าส่งข้อมูลสำเร็จ | `I (22150) app: Received custom data: TEST_DATA_999` |
 
 ---
 
 ## 8. คำถามท้ายการทดลอง (Post-Lab Questions)
-1. การใช้ **Proof-of-Possession (PoP)** ช่วยป้องกันการโจมตีประเภทใดได้บ้าง?
+
+1. การใช้ Proof-of-Possession (PoP) ช่วยป้องกันการโจมตีประเภทใดได้บ้าง?
+
+   PoP ช่วยป้องกันการโจมตีแบบ **Rogue Provisioning** หรือการที่ผู้ไม่หวังดีที่อยู่ในรัศมีสัญญาณ (เช่น BLE หรือ Wi-Fi SoftAP) พยายามเชื่อมต่อและเข้าควบคุมอุปกรณ์โดยไม่ได้รับอนุญาต เนื่องจากผู้โจมตีจะไม่ทราบค่า PoP (ซึ่งมักพิมพ์ไว้บนฉลากอุปกรณ์หรือกำหนดเฉพาะเครื่อง) จึงไม่สามารถผ่านขั้นตอน Key Exchange ไปสร้าง Session ที่เข้ารหัสได้ นอกจากนี้ยังช่วยป้องกัน **Man-in-the-Middle (MITM) Attack** ระหว่างขั้นตอนแลกเปลี่ยนกุญแจ เพราะ PoP ถูกใช้เป็นส่วนหนึ่งในการยืนยันตัวตนและสร้าง Shared Secret ทำให้ผู้ดักฟังสัญญาณไม่สามารถถอดรหัสหรือปลอมแปลงข้อมูลระหว่างทางได้
+
 2. หากไม่มีการใช้ PoP (เช่น ใน Security 0) ผู้โจมตีที่อยู่ในรัศมีสัญญาณบลูทูธสามารถทำสิ่งใดกับอุปกรณ์ได้บ้าง?
-3. ในการประยุกต์ใช้งานเชิงพาณิชย์จริง เราสามารถนำ **Custom Data Endpoint** ไปใช้ส่งข้อมูลประเภทใดได้อีกบ้าง (ยกตัวอย่าง 2 กรณี)?
+
+   หากใช้ Security 0 (ไม่มีการเข้ารหัสและไม่มี PoP) ผู้โจมตีที่อยู่ในรัศมีสัญญาณสามารถ:
+   - เชื่อมต่อกับอุปกรณ์ได้โดยตรงโดยไม่ต้องผ่านการยืนยันตัวตนใด ๆ
+   - ดักฟัง (Sniff) ข้อมูล Wi-Fi SSID และรหัสผ่านที่ส่งผ่าน BLE/SoftAP แบบข้อความธรรมดา (Plaintext) เนื่องจากไม่มีการเข้ารหัส
+   - ปลอมตัวเป็นแอปที่ถูกต้อง (Rogue Provisioner) แล้วส่งค่า Wi-Fi Credential ปลอมหรือค่า Configuration ที่เป็นอันตรายเข้าไปในอุปกรณ์ ทำให้อุปกรณ์เชื่อมต่อเข้ากับเครือข่ายของผู้โจมตีแทน (Network Hijacking)
+   - เข้าถึง Custom Data Endpoint และส่งข้อมูลปลอมหรือคำสั่งที่ไม่พึงประสงค์เข้าไปยังอุปกรณ์ได้โดยตรง
+
+3. ในการประยุกต์ใช้งานเชิงพาณิชย์จริง เราสามารถนำ Custom Data Endpoint** ไปใช้ส่งข้อมูลประเภทใดได้อีกบ้าง (ยกตัวอย่าง 2 กรณี)?
+
+   - กรณีที่ 1: การส่ง Cloud/MQTT Configuration** เช่น URL ของ MQTT Broker, Client ID, Token หรือ Certificate สำหรับเชื่อมต่อกับแพลตฟอร์ม IoT Cloud (เช่น AWS IoT, Firebase) เพื่อให้อุปกรณ์รู้ว่าต้องเชื่อมต่อไปที่ Server ใดหลัง Provisioning เสร็จ
+   - กรณีที่ 2: การผูกอุปกรณ์กับบัญชีผู้ใช้ (Device Binding/Activation)** เช่น ส่ง Owner Email, User ID, หรือ Activation Code เพื่อลงทะเบียนอุปกรณ์เข้ากับบัญชีผู้ใช้ในระบบหลังบ้าน (Backend) ทำให้สามารถติดตามและจัดการอุปกรณ์แต่ละเครื่องผ่านแอปพลิเคชันได้อย่างถูกต้อง
+
 4. ในฟังก์ชัน `custom_prov_data_handler()` เหตุใดหน่วยความจำที่จัดสรรให้ `*outbuf` จึงถูก Free โดย Protocomm Layer อัตโนมัติหลังจากส่งข้อมูลเสร็จ?
+
+   เนื่องจาก Protocomm Layer เป็นผู้เรียกใช้งาน (Caller) ฟังก์ชัน `custom_prov_data_handler()` และเป็นผู้รับผิดชอบนำค่า `*outbuf` ไปเข้ารหัสและส่งกลับไปยัง Client ต่อ ดังนั้นตามหลักการจัดการหน่วยความจำ (Memory Ownership) เมื่อฟังก์ชัน Handler จัดสรร Heap Memory ด้วย `strdup()` แล้วส่ง Pointer กลับผ่าน `*outbuf` ถือเป็นการ "โอนกรรมสิทธิ์" (Transfer Ownership) ของหน่วยความจำนั้นให้ Protocomm Layer เป็นผู้ดูแลต่อ เมื่อ Protocomm ใช้งานข้อมูลเสร็จสิ้น (ส่งออกไปเรียบร้อยแล้ว) จึงมีหน้าที่เรียก `free()` คืนหน่วยความจำเอง เพื่อป้องกันปัญหา **Memory Leak** เนื่องจากฟังก์ชัน Handler เองไม่มีโอกาสรู้ว่า Protocomm ใช้งานข้อมูลเสร็จเมื่อใด จึงไม่สามารถ Free เองได้ภายในฟังก์ชันก่อน Return
 

@@ -5,10 +5,12 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_netif.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
-#include "wifi_provisioning/manager.h"
-#include "wifi_provisioning/scheme_ble.h"
+#include "network_provisioning/manager.h"      // เดิม: "wifi_provisioning/manager.h"
+#include "network_provisioning/scheme_ble.h"    // เดิม: "wifi_provisioning/scheme_ble.h"
+#include "protocomm_security.h"                 // ยังคงชื่อเดิม ไม่ถูกย้าย/เปลี่ยนชื่อใน v6.0
 
 static const char *TAG = "LAB7_4_CUSTOM";
 
@@ -50,12 +52,12 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
             ESP_LOGE(TAG, "[SECURITY ALERT]: INVALID PoP / Unauthorized Access!");
             ESP_LOGE(TAG, "--------------------------------------------------");
         }
-    } else if (event_base == WIFI_PROV_EVENT) {
-        if (event_id == WIFI_PROV_CRED_SUCCESS) {
+    } else if (event_base == NETWORK_PROV_EVENT) {                    // เดิม: WIFI_PROV_EVENT
+        if (event_id == NETWORK_PROV_WIFI_CRED_SUCCESS) {             // เดิม: WIFI_PROV_CRED_SUCCESS
             ESP_LOGI(TAG, "[SUCCESS]: Provisioning Completed!");
             gpio_set_level(LED_PIN_BLE_PROV, 0);
-        } else if (event_id == WIFI_PROV_END) {
-            wifi_prov_mgr_deinit();
+        } else if (event_id == NETWORK_PROV_END) {                    // เดิม: WIFI_PROV_END
+            network_prov_mgr_deinit();
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
@@ -76,7 +78,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));               // เดิม: WIFI_PROV_EVENT
     ESP_ERROR_CHECK(esp_event_handler_register(PROTOCOMM_SECURITY_SESSION_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL));
 
@@ -85,14 +87,14 @@ void app_main(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    wifi_prov_mgr_config_t config = {
-        .scheme = wifi_prov_scheme_ble,
-        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
+    network_prov_mgr_config_t config = {                              // เดิม: wifi_prov_mgr_config_t
+        .scheme = network_prov_scheme_ble,                            // เดิม: wifi_prov_scheme_ble
+        .scheme_event_handler = NETWORK_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM  // เดิม: WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
     };
-    ESP_ERROR_CHECK(wifi_prov_mgr_init(config));
+    ESP_ERROR_CHECK(network_prov_mgr_init(config));                   // เดิม: wifi_prov_mgr_init
 
     bool provisioned = false;
-    ESP_ERROR_CHECK(wifi_prov_mgr_is_provisioned(&provisioned));
+    ESP_ERROR_CHECK(network_prov_mgr_is_wifi_provisioned(&provisioned));  // เดิม: wifi_prov_mgr_is_provisioned
 
     if (!provisioned) {
         uint8_t mac[6];
@@ -104,18 +106,18 @@ void app_main(void)
             0xb4, 0xdf, 0x5a, 0x1c, 0x3f, 0x6b, 0xf4, 0xbf,
             0xea, 0x4a, 0x82, 0x03, 0x04, 0x90, 0x1a, 0x02,
         };
-        wifi_prov_scheme_ble_set_service_uuid(custom_service_uuid);
+        network_prov_scheme_ble_set_service_uuid(custom_service_uuid);   // เดิม: wifi_prov_scheme_ble_set_service_uuid
 
         // 1. สร้าง Custom Endpoint ก่อนสั่ง Start Provisioning
-        wifi_prov_mgr_endpoint_create("custom-data");
+        network_prov_mgr_endpoint_create("custom-data");                 // เดิม: wifi_prov_mgr_endpoint_create
 
         // 2. เริ่มต้น Provisioning Service
-        wifi_prov_security_t security = WIFI_PROV_SECURITY_1;
+        network_prov_security_t security = NETWORK_PROV_SECURITY_1;      // เดิม: wifi_prov_security_t / WIFI_PROV_SECURITY_1
         const char *pop = PROV_POP_KEY;
-        ESP_ERROR_CHECK(wifi_prov_mgr_start_provisioning(security, (const void *)pop, service_name, NULL));
+        ESP_ERROR_CHECK(network_prov_mgr_start_provisioning(security, (const void *)pop, service_name, NULL));  // เดิม: wifi_prov_mgr_start_provisioning
 
         // 3. ผูกฟังก์ชัน Callback เข้ากับ Endpoint หลัง Start Service
-        wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);
+        network_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL);  // เดิม: wifi_prov_mgr_endpoint_register
 
         gpio_set_level(LED_PIN_BLE_PROV, 1);
 
@@ -128,7 +130,7 @@ void app_main(void)
         ESP_LOGI(TAG, "--------------------------------------------------");
     } else {
         ESP_LOGI(TAG, "Already provisioned! Starting Wi-Fi Station");
-        wifi_prov_mgr_deinit();
+        network_prov_mgr_deinit();                                       // เดิม: wifi_prov_mgr_deinit
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_start());
     }
